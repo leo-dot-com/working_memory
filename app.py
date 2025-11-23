@@ -169,7 +169,7 @@ def speech_to_text():
 
 def analyze_response_accuracy(actual, expected, task_type):
     """
-    Analyze the accuracy of the response based on task type
+    Analyze the accuracy of the response based on task type with better error tolerance
     """
     if not actual or not expected:
         return False, 0.0
@@ -178,7 +178,7 @@ def analyze_response_accuracy(actual, expected, task_type):
     actual_clean = actual.lower().strip()
     expected_clean = expected.lower().strip()
     
-    # Exact match
+    # Exact match (with case insensitivity)
     if actual_clean == expected_clean:
         return True, 1.0
     
@@ -190,21 +190,21 @@ def analyze_response_accuracy(actual, expected, task_type):
     elif 'sentence' in task_type:
         return analyze_sentence_span_response(actual_clean, expected_clean)
     else:
-        # Default: partial match
+        # Default: partial match with higher tolerance
         return analyze_partial_match(actual_clean, expected_clean)
 
 def analyze_digit_response(actual, expected):
     """
-    Analyze digit span responses with tolerance for minor errors
+    Analyze digit span responses with tolerance for formatting variations
     """
-    # Extract digits from both strings
-    actual_digits = re.findall(r'\d+', actual)
-    expected_digits = re.findall(r'\d+', expected)
+    # Extract and normalize digits from both strings
+    actual_digits = extract_and_normalize_digits(actual)
+    expected_digits = extract_and_normalize_digits(expected)
     
     if not actual_digits:
         return False, 0.0
     
-    # Check if sequences match
+    # Check if sequences match exactly
     if actual_digits == expected_digits:
         return True, 1.0
     
@@ -214,7 +214,71 @@ def analyze_digit_response(actual, expected):
         accuracy = correct_positions / len(expected_digits)
         return accuracy >= 0.7, accuracy
     
+    # If lengths don't match but content is similar, check for concatenation
+    if is_concatenated_version(actual_digits, expected_digits):
+        return True, 0.9
+    
     return False, 0.3
+
+def extract_and_normalize_digits(text):
+    """
+    Extract digits from text and handle various formats:
+    - "3 7 1" -> [3, 7, 1]
+    - "3,7,1" -> [3, 7, 1] 
+    - "371" -> [3, 7, 1]
+    - "three seven one" -> [3, 7, 1]
+    """
+    if not text:
+        return []
+    
+    # Convert to lowercase for word matching
+    text_lower = text.lower().strip()
+    
+    # Handle digit words first
+    digit_words = {
+        'zero': '0', 'one': '1', 'two': '2', 'three': '3', 'four': '4',
+        'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9'
+    }
+    
+    # Replace digit words with actual digits
+    for word, digit in digit_words.items():
+        text_lower = text_lower.replace(word, digit)
+    
+    # Now extract all digits (including the converted ones)
+    digits = []
+    current_number = ''
+    
+    for char in text_lower:
+        if char.isdigit():
+            current_number += char
+        else:
+            # When we hit a non-digit, add the accumulated digits as separate numbers
+            if current_number:
+                # If it's a multi-digit number, split into individual digits
+                digits.extend([int(d) for d in current_number])
+                current_number = ''
+    
+    # Don't forget the last number
+    if current_number:
+        digits.extend([int(d) for d in current_number])
+    
+    return digits
+
+def is_concatenated_version(actual_digits, expected_digits):
+    """
+    Check if actual digits are just a concatenated version of expected digits
+    Example: [3,7,1] vs [371] -> True
+    """
+    if len(actual_digits) != 1:
+        return False
+    
+    # Convert expected digits to a concatenated string
+    expected_concatenated = ''.join(str(d) for d in expected_digits)
+    
+    # Convert actual single element to string
+    actual_string = str(actual_digits[0])
+    
+    return actual_string == expected_concatenated
 
 def analyze_nonword_response(actual, expected):
     """

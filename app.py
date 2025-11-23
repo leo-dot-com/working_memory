@@ -1,34 +1,31 @@
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import speech_recognition as sr
-import pyttsx3
 import openai
 import os
 import tempfile
-import wave
 import io
 import base64
 from pydub import AudioSegment
-import numpy as np
 import re
+import requests
 
 app = Flask(__name__)
 CORS(app)
 
-# Initialize TTS engine
-tts_engine = pyttsx3.init()
-tts_engine.setProperty('rate', 150)
-tts_engine.setProperty('volume', 0.8)
-
 # Initialize Speech Recognition
 recognizer = sr.Recognizer()
+
+# Configuration
+ELEVENLABS_API_KEY = os.environ.get('ELEVENLABS_API_KEY', '')
+OPENAI_API_KEY = os.environ.get('OPENAI_API_KEY', '')
 
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
         'status': 'healthy',
         'service': 'working_memory_assessment',
-        'tts_available': True,
+        'tts_available': bool(ELEVENLABS_API_KEY),
         'stt_available': True
     })
 
@@ -41,32 +38,66 @@ def text_to_speech():
         if not text:
             return jsonify({'error': 'No text provided'}), 400
         
-        # Create temporary file for audio
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-            temp_filename = temp_file.name
-        
-        # Generate speech
-        tts_engine.save_to_file(text, temp_filename)
-        tts_engine.runAndWait()
-        
-        # Read the generated audio file
-        with open(temp_filename, 'rb') as audio_file:
-            audio_data = audio_file.read()
-        
-        # Convert to base64 for easy transmission
-        audio_base64 = base64.b64encode(audio_data).decode('utf-8')
-        
-        # Clean up temporary file
-        os.unlink(temp_filename)
-        
-        return jsonify({
-            'success': True,
-            'audio_url': f"data:audio/wav;base64,{audio_base64}",
-            'text_length': len(text)
-        })
+        # Use ElevenLabs for high-quality TTS (free tier available)
+        if ELEVENLABS_API_KEY:
+            return text_to_speech_elevenlabs(text)
+        else:
+            # Fallback to system TTS (will need to implement differently)
+            return text_to_speech_fallback(text)
         
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+def text_to_speech_elevenlabs(text):
+    """Use ElevenLabs API for high-quality TTS"""
+    try:
+        url = "https://api.elevenlabs.io/v1/text-to-speech/21m00Tcm4TlvDq8ikWAM"
+        
+        headers = {
+            "Accept": "audio/mpeg",
+            "Content-Type": "application/json",
+            "xi-api-key": ELEVENLABS_API_KEY
+        }
+        
+        data = {
+            "text": text,
+            "model_id": "eleven_monolingual_v1",
+            "voice_settings": {
+                "stability": 0.5,
+                "similarity_boost": 0.5
+            }
+        }
+        
+        response = requests.post(url, json=data, headers=headers)
+        
+        if response.status_code == 200:
+            audio_base64 = base64.b64encode(response.content).decode('utf-8')
+            return jsonify({
+                'success': True,
+                'audio_url': f"data:audio/mpeg;base64,{audio_base64}",
+                'text_length': len(text),
+                'provider': 'elevenlabs'
+            })
+        else:
+            return text_to_speech_fallback(text)
+            
+    except Exception as e:
+        print(f"ElevenLabs TTS failed: {e}")
+        return text_to_speech_fallback(text)
+
+def text_to_speech_fallback(text):
+    """Fallback TTS using system commands or return text for browser TTS"""
+    try:
+        # For now, return the text and let the browser handle TTS
+        # In production, you could use AWS Polly, Google TTS, or other services
+        return jsonify({
+            'success': True,
+            'text': text,
+            'provider': 'browser',
+            'message': 'Use browser text-to-speech for this text'
+        })
+    except Exception as e:
+        return jsonify({'error': f'Fallback TTS failed: {str(e)}'}), 500
 
 @app.route('/stt', methods=['POST'])
 def speech_to_text():

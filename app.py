@@ -282,28 +282,60 @@ def is_concatenated_version(actual_digits, expected_digits):
 
 def analyze_nonword_response(actual, expected):
     """
-    Analyze non-word repetition with phonetic tolerance
+    Analyze non-word repetition with better phonetic tolerance
     """
     # Remove spaces and normalize
-    actual_clean = actual.replace(' ', '')
-    expected_clean = expected.replace(' ', '')
+    actual_clean = actual.replace(' ', '').lower()
+    expected_clean = expected.replace(' ', '').lower()
     
+    # Exact match
     if actual_clean == expected_clean:
         return True, 1.0
     
-    # Calculate Levenshtein distance for similarity
-    distance = levenshtein_distance(actual_clean, expected_clean)
-    max_len = max(len(actual_clean), len(expected_clean))
-    similarity = 1 - (distance / max_len) if max_len > 0 else 0
+    # Phonetic similarity check
+    similarity = calculate_phonetic_similarity(actual_clean, expected_clean)
     
-    return similarity >= 0.7, similarity
+    # Be more lenient with non-words - 60% similarity is enough
+    return similarity >= 0.6, similarity
+
+def calculate_phonetic_similarity(s1, s2):
+    """
+    Calculate similarity between two strings with phonetic considerations
+    """
+    # First, calculate Levenshtein distance
+    distance = levenshtein_distance(s1, s2)
+    max_len = max(len(s1), len(s2))
+    basic_similarity = 1 - (distance / max_len) if max_len > 0 else 0
+    
+    # Boost similarity for common phonetic substitutions
+    common_substitutions = [
+        ('b', 'p'), ('p', 'b'), ('d', 't'), ('t', 'd'), 
+        ('g', 'k'), ('k', 'g'), ('v', 'f'), ('f', 'v'),
+        ('s', 'z'), ('z', 's'), ('m', 'n'), ('n', 'm'),
+        ('i', 'e'), ('e', 'i'), ('a', 'e'), ('o', 'u')
+    ]
+    
+    # If strings are same length, check for common phonetic substitutions
+    if len(s1) == len(s2):
+        substitution_score = 0
+        for char1, char2 in zip(s1, s2):
+            if char1 == char2:
+                substitution_score += 1
+            elif (char1, char2) in common_substitutions:
+                substitution_score += 0.8  # Partial credit for phonetic substitutions
+        
+        substitution_similarity = substitution_score / len(s1)
+        # Take the higher of the two similarity scores
+        return max(basic_similarity, substitution_similarity)
+    
+    return basic_similarity
 
 def analyze_sentence_span_response(actual, expected):
     """
-    Analyze sentence span responses (remembering last words)
+    Analyze sentence span responses (remembering last words) with better tolerance
     """
-    actual_words = actual.split()
-    expected_words = expected.split()
+    actual_words = [w.lower() for w in actual.split()]
+    expected_words = [w.lower() for w in expected.split()]
     
     if not actual_words:
         return False, 0.0
@@ -312,7 +344,8 @@ def analyze_sentence_span_response(actual, expected):
     correct_words = sum(1 for word in expected_words if word in actual_words)
     accuracy = correct_words / len(expected_words)
     
-    return accuracy >= 0.7, accuracy
+    # Be more lenient - if they got most words right, count as correct
+    return accuracy >= 0.6, accuracy
 
 def analyze_partial_match(actual, expected):
     """
